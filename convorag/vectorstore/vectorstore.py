@@ -26,8 +26,6 @@ class VectorStore:
             self.add_embedding(conversation["id"], embedding_np)
     
     def add_embedding(self, conversation_id, embedding):
-        if self.db.has_embedding(conversation_id):
-            return
         embedding_np = np.array(embedding, dtype=np.float32).reshape(1, -1)
         self.index.add(embedding_np)
         self.index_to_conversation_id.append(conversation_id)  # Store the mapping
