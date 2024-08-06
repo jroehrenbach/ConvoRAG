@@ -13,7 +13,8 @@ class Database:
                 id TEXT PRIMARY KEY,
                 title TEXT,
                 create_time REAL,
-                update_time REAL
+                update_time REAL,
+                has_embeddings INTEGER DEFAULT 0 CHECK (has_embeddings IN (0, 1))
             );
             ''')
 
@@ -37,8 +38,10 @@ class Database:
             CREATE TABLE IF NOT EXISTS embeddings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER,
+                parent_id INTEGER,
                 embedding BLOB,
                 FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+                FOREIGN KEY(parent_id) REFERENCES embeddings(id)
             )
             ''')
 
@@ -111,28 +114,20 @@ class Database:
         cursor = self.conn.execute(query, params)
         columns = [description[0] for description in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
-    def store_embedding(self, conversation_id, embedding):
-        with self.conn:
-            self.conn.execute('''
-                INSERT INTO embeddings (conversation_id, embedding) VALUES (?, ?)
-            ''', (conversation_id, embedding.tobytes()))
     
-    def has_embedding(self, conversation_id):
-        with self.conn:
-            result = self.conn.execute('''
-                SELECT EXISTS(
-                    SELECT 1 FROM embeddings WHERE conversation_id=?
-                )
-            ''', (conversation_id,)).fetchone()
+    def conversation_has_embeddings(self, conversation_id):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT has_embeddings FROM conversations WHERE id = ?',
+                       (conversation_id,))
+        result = cursor.fetchone()
+        if result:
             return result[0] == 1
-    
-    def get_embedding_by_conversation_id(self, conversation_id):
+        return False
+
+    def mark_conversation_as_embedded(self, conversation_id):
         with self.conn:
-            result = self.conn.execute('''
-                SELECT embedding FROM embeddings WHERE conversation_id=?
-            ''', (conversation_id,)).fetchone()
-            return np.frombuffer(result[0], dtype=np.float32) if result else None
+            self.conn.execute('UPDATE conversations SET has_embeddings = 1 '
+                              'WHERE id = ?', (conversation_id,))
         
     def get_conversation_by_id(self, conversation_id):
         with self.conn:
@@ -145,3 +140,47 @@ class Database:
                     'title': result[1]
                 }
             return None
+    
+    def get_conversation_id_by_embedding_id(self, embedding_id):
+        cursor = self.conn.execute('SELECT conversation_id FROM embeddings WHERE id = ?',
+                                   (embedding_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+        return None
+
+    def read_embedding_ids(self):
+        cursor = self.conn.execute('SELECT id FROM embeddings')
+        return [row[0] for row in cursor.fetchall()]
+
+    def get_embedding_by_id(self, embedding_id):
+        cursor = self.conn.execute('SELECT * FROM embeddings WHERE id = ?',
+                                   (embedding_id,))
+        result = cursor.fetchone()
+        embedding_np = np.frombuffer(
+            result[3], dtype=np.float32
+        ).reshape(1, -1)
+        if result:
+            return {
+                'id': result[0],
+                'conversation_id': result[1],
+                'parent_id': result[2],
+                'embedding': embedding_np
+            }
+        return None
+    
+    def get_embedding_ids_by_conversation_id(self, conversation_id):
+        cursor = self.conn.execute('SELECT id FROM embeddings WHERE conversation_id = ?',
+                                   (conversation_id,))
+        return [row[0] for row in cursor.fetchall()]
+
+    def store_embeddings(self, conversation_id, embeddings):
+        with self.conn:
+            parent_id = None
+            for embedding in embeddings:
+                self.conn.execute('''
+                INSERT INTO embeddings (conversation_id, parent_id, embedding)
+                VALUES (?, ?, ?)
+                ''', (conversation_id, parent_id, embedding.tobytes()))
+                parent_id = self.conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        self.mark_conversation_as_embedded(conversation_id)

@@ -26,15 +26,19 @@ class ConversationManager:
     def process_conversations(self):
         conversations = self.db.read_conversations()
         for conversation in conversations:
-            if self.db.has_embedding(conversation["id"]):
+            if self.db.conversation_has_embeddings(conversation["id"]):
                 continue
             messages = self.db.read_messages_by_conversation_id(
                 conversation["id"]
             )
-            doc = ConversationFormatter.combine_messages_to_string(messages)
-            chunks = TextPreprocessor(doc).preprocess()
-            embedding = self.embedding_model.sequential_embeddings(chunks)
-            self.vectorstore.store_embedding(conversation["id"], embedding)
+            chunks = ConversationFormatter(messages).get_qa_chunks()
+            embeddings = []
+            for chunk in chunks:
+                sub_chunks = TextPreprocessor(chunk).preprocess()
+                embedding = self.embedding_model.sequential_embeddings(sub_chunks)
+                embeddings.append(embedding)
+            self.vectorstore.store_embeddings(conversation["id"], embeddings)
+            self.db.mark_conversation_as_embedded(conversation["id"])
     
     def query(self, query_text, k=5):
         return self.query_system.query(query_text, k)

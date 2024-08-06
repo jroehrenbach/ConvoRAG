@@ -30,9 +30,15 @@ class QuerySystem:
         query_embedding = self.generate_query_embedding(query_chunks[0])
         distances, indices = self.search_vectorstore(query_embedding, k)
         conversations = self.retrieve_conversations(indices[0])
-        for conversation, distance in zip(conversations, distances[0]):
-            conversation["distance"] = distance
-        return conversations
+        conversation_ids = [c["id"] for c in conversations]
+        result = []
+        for i in range(len(conversations)):
+            conversation = conversations[i]
+            if conversation["id"] in conversation_ids[:i]:
+                continue
+            conversation["distance"] = distances[0][i]
+            result.append(conversation)
+        return result
 
 def querysystem_from_path(db_path):
     embedding_model = EmbeddingModel()
